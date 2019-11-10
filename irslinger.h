@@ -46,6 +46,34 @@ static inline void carrierFrequency(uint32_t outPin, double frequency, double du
 	}
 }
 
+static inline int getbit(const char * code, int bitnum)
+{
+	if (code[0] == '0' && code[1] == 'x') {
+		char x = code[2+(bitnum/4)];
+		int n;
+		if (x >= '0' && x<= '9') {
+			n=x - '0';
+		} else if (x >= 'a' && x<='f') {
+			n=x - 'a' + 10;
+		} else if (x >= 'A' && x<='F') {
+			n=x - 'A' + 10;
+		} else {
+			printf("Character %c is not valid hex\n",x);
+			return -1;
+		}
+		//printf("Bit %d from digit %c n %d\n",(n & (1<<(3-(bitnum%4))))?1:0,x,n);
+		return (n & (1<<(3-(bitnum%4))))?1:0;
+	}
+	if (code[bitnum] == '0') {
+		return 0;
+	}
+	if (code[bitnum] == '1') {
+		return 1;
+	}
+	printf("Do not recognise bit code %c at position %d\n",code[bitnum],bitnum);
+	return -1;
+}
+
 // Generates a low signal gap for duration, in microseconds, on GPIO pin outPin
 static inline void gap(uint32_t outPin, double duration, gpioPulse_t *irSignal, int *pulseCount)
 {
@@ -113,6 +141,9 @@ static inline int irSlingRC5(uint32_t outPin,
 	}
 
 	size_t codeLen = strlen(code);
+	if (code[0]=='0' && code[1]=='x') {
+		codeLen=(codeLen-2)*4;
+	}
 
 	printf("code size is %zu\n", codeLen);
 
@@ -129,19 +160,16 @@ static inline int irSlingRC5(uint32_t outPin,
 	int i;
 	for (i = 0; i < codeLen; i++)
 	{
-		if (code[i] == '0')
+		switch (getbit(code,i))
 		{
-			carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
-			gap(outPin, pulseDuration, irSignal, &pulseCount);
-		}
-		else if (code[i] == '1')
-		{
-			gap(outPin, pulseDuration, irSignal, &pulseCount);
-			carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
-		}
-		else
-		{
-			printf("Warning: Non-binary digit in command\n");
+			case 0:
+				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
+				gap(outPin, pulseDuration, irSignal, &pulseCount);
+				break;
+			case 1:
+				gap(outPin, pulseDuration, irSignal, &pulseCount);
+				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
+				break;
 		}
 	}
 
@@ -170,6 +198,9 @@ static inline int irSling(uint32_t outPin,
 	}
 
 	size_t codeLen = strlen(code);
+	if (code[0]=='0' && code[1]=='x') {
+		codeLen=(codeLen-2)*4;
+	}
 
 	printf("code size is %zu\n", codeLen);
 
@@ -189,19 +220,16 @@ static inline int irSling(uint32_t outPin,
 	int i;
 	for (i = 0; i < codeLen; i++)
 	{
-		if (code[i] == '0')
+		switch (getbit(code,i))
 		{
-			carrierFrequency(outPin, frequency, dutyCycle, zeroPulse, irSignal, &pulseCount);
-			gap(outPin, zeroGap, irSignal, &pulseCount);
-		}
-		else if (code[i] == '1')
-		{
-			carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, &pulseCount);
-			gap(outPin, oneGap, irSignal, &pulseCount);
-		}
-		else
-		{
-			printf("Warning: Non-binary digit in command\n");
+			case 0:
+				carrierFrequency(outPin, frequency, dutyCycle, zeroPulse, irSignal, &pulseCount);
+				gap(outPin, zeroGap, irSignal, &pulseCount);
+				break;
+			case 1:
+				carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, &pulseCount);
+				gap(outPin, oneGap, irSignal, &pulseCount);
+				break;
 		}
 	}
 
