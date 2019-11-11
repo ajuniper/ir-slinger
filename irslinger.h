@@ -4,11 +4,12 @@
 #include <string.h>
 #include <math.h>
 #include <pigpio.h>
+#include <stdio.h>
 
 #define MAX_COMMAND_SIZE 512
 #define MAX_PULSES 12000
 
-static inline void addPulse(uint32_t onPins, uint32_t offPins, uint32_t duration, gpioPulse_t *irSignal, int *pulseCount)
+static inline void addPulse(uint32_t onPins, uint32_t offPins, uint32_t duration, gpioPulse_t *irSignal, unsigned int *pulseCount)
 {
 	int index = *pulseCount;
 
@@ -21,7 +22,7 @@ static inline void addPulse(uint32_t onPins, uint32_t offPins, uint32_t duration
 
 // Generates a square wave for duration (microseconds) at frequency (Hz)
 // on GPIO pin outPin. dutyCycle is a floating value between 0 and 1.
-static inline void carrierFrequency(uint32_t outPin, double frequency, double dutyCycle, double duration, gpioPulse_t *irSignal, int *pulseCount)
+static inline void carrierFrequency(uint32_t outPin, double frequency, double dutyCycle, double duration, gpioPulse_t *irSignal, unsigned int *pulseCount)
 {
 	double oneCycleTime = 1000000.0 / frequency; // 1000000 microseconds in a second
 	int onDuration = (int)round(oneCycleTime * dutyCycle);
@@ -75,14 +76,20 @@ static inline int getbit(const char * code, int bitnum)
 }
 
 // Generates a low signal gap for duration, in microseconds, on GPIO pin outPin
-static inline void gap(uint32_t outPin, double duration, gpioPulse_t *irSignal, int *pulseCount)
+static inline void gap(uint32_t outPin, double duration, gpioPulse_t *irSignal, unsigned int *pulseCount)
 {
 	addPulse(0, 0, duration, irSignal, pulseCount);
 }
 
 // Transmit generated wave
-static inline int transmitWave(uint32_t outPin, gpioPulse_t *irSignal, unsigned int *pulseCount)
+static inline int transmitWavePre(uint32_t outPin)
 {
+	if (outPin > 31)
+	{
+		// Invalid pin number
+		return 1;
+	}
+
 	// Init pigpio
 	if (gpioInitialise() < 0)
 	{
@@ -93,11 +100,15 @@ static inline int transmitWave(uint32_t outPin, gpioPulse_t *irSignal, unsigned 
 
 	// Setup the GPIO pin as an output pin
 	gpioSetMode(outPin, PI_OUTPUT);
+	return 0;
+}
 
+static inline int transmitWave(gpioPulse_t *irSignal, unsigned int pulseCount)
+{
 	// Start a new wave
 	gpioWaveClear();
 
-	gpioWaveAddGeneric(*pulseCount, irSignal);
+	gpioWaveAddGeneric(pulseCount, irSignal);
 	int waveID = gpioWaveCreate();
 
 	if (waveID >= 0)
@@ -109,6 +120,7 @@ static inline int transmitWave(uint32_t outPin, gpioPulse_t *irSignal, unsigned 
 	else
 	{
 		printf("Wave creation failure!\n %i", waveID);
+		return 1;
 	}
 
 	// Wait for the wave to finish transmitting
@@ -122,39 +134,30 @@ static inline int transmitWave(uint32_t outPin, gpioPulse_t *irSignal, unsigned 
 	{
 		gpioWaveDelete(waveID);
 	}
+	return 0;
+}
 
+static inline int transmitWavePost()
+{
 	// Cleanup
 	gpioTerminate();
 	return 0;
 }
 
-static inline int irSlingRC5(uint32_t outPin,
+static inline int irSlingPrepareRC5(gpioPulse_t *irSignal,
+	unsigned int * pulseCount,
+	int outPin,
 	int frequency,
 	double dutyCycle,
 	int pulseDuration,
-	const char *code)
+	const char *code,
+	size_t codeLen)
 {
-	if (outPin > 31)
-	{
-		// Invalid pin number
-		return 1;
-	}
-
-	size_t codeLen = strlen(code);
-	if (code[0]=='0' && code[1]=='x') {
-		codeLen=(codeLen-2)*4;
-	}
-
-	printf("code size is %zu\n", codeLen);
-
 	if (codeLen > MAX_COMMAND_SIZE)
 	{
 		// Command is too big
 		return 1;
 	}
-
-	gpioPulse_t irSignal[MAX_PULSES];
-	int pulseCount = 0;
 
 	// Generate Code
 	int i;
@@ -163,20 +166,95 @@ static inline int irSlingRC5(uint32_t outPin,
 		switch (getbit(code,i))
 		{
 			case 0:
-				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
-				gap(outPin, pulseDuration, irSignal, &pulseCount);
+				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, pulseCount);
+				gap(outPin, pulseDuration, irSignal, pulseCount);
 				break;
 			case 1:
-				gap(outPin, pulseDuration, irSignal, &pulseCount);
-				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, &pulseCount);
+				gap(outPin, pulseDuration, irSignal, pulseCount);
+				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, pulseCount);
 				break;
 		}
 	}
 
-	printf("pulse count is %i\n", pulseCount);
+	printf("pulse count is %i\n", *pulseCount);
 	// End Generate Code
+}
 
-	return transmitWave(outPin, irSignal, &pulseCount);
+static inline int irSlingRC5(uint32_t outPin,
+	int frequency,
+	double dutyCycle,
+	int pulseDuration,
+	const char *code)
+{
+	gpioPulse_t irSignal[MAX_PULSES];
+	unsigned int pulseCount = 0;
+
+	size_t codeLen = strlen(code);
+	if (code[0]=='0' && code[1]=='x') {
+		codeLen=(codeLen-2)*4;
+	}
+
+	printf("code size is %zu\n", codeLen);
+
+	if (irSlingPrepareRC5(irSignal, &pulseCount, outPin, frequency, dutyCycle, pulseDuration, code, codeLen)) return 1;
+	int ret = 1;
+	if (transmitWavePre(outPin)) return 1;
+	ret = transmitWave(irSignal, pulseCount);
+	transmitWavePost();
+	return ret;
+}
+
+static inline int irSlingPrepare(gpioPulse_t *irSignal, unsigned int * pulseCount, uint32_t outPin,
+	int frequency,
+	double dutyCycle,
+	int leadingPulseDuration,
+	int leadingGapDuration,
+	int onePulse,
+	int zeroPulse,
+	int oneGap,
+	int zeroGap,
+	int sendTrailingPulse,
+	const char *code,
+	size_t codeLen)
+{
+	if (outPin > 31)
+	{
+		// Invalid pin number
+		return 1;
+	}
+
+	// Generate Code
+	carrierFrequency(outPin, frequency, dutyCycle, leadingPulseDuration, irSignal, pulseCount);
+	gap(outPin, leadingGapDuration, irSignal, pulseCount);
+
+	int i;
+	for (i = 0; i < codeLen; i++)
+	{
+		switch (getbit(code,i))
+		{
+			case 0:
+				carrierFrequency(outPin, frequency, dutyCycle, zeroPulse, irSignal, pulseCount);
+				gap(outPin, zeroGap, irSignal, pulseCount);
+				break;
+			case 1:
+				carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, pulseCount);
+				gap(outPin, oneGap, irSignal, pulseCount);
+				break;
+		}
+	}
+
+	if (sendTrailingPulse==1)
+	{
+		carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, pulseCount);
+	}
+	else if (sendTrailingPulse > 0)
+	{
+		carrierFrequency(outPin, frequency, dutyCycle, sendTrailingPulse, irSignal, pulseCount);
+	}
+
+	printf("pulse count is %i\n", *pulseCount);
+	// End Generate Code
+	return 0;
 }
 
 static inline int irSling(uint32_t outPin,
@@ -191,12 +269,6 @@ static inline int irSling(uint32_t outPin,
 	int sendTrailingPulse,
 	const char *code)
 {
-	if (outPin > 31)
-	{
-		// Invalid pin number
-		return 1;
-	}
-
 	size_t codeLen = strlen(code);
 	if (code[0]=='0' && code[1]=='x') {
 		codeLen=(codeLen-2)*4;
@@ -211,39 +283,17 @@ static inline int irSling(uint32_t outPin,
 	}
 
 	gpioPulse_t irSignal[MAX_PULSES];
-	int pulseCount = 0;
+	unsigned int pulseCount = 0;
 
-	// Generate Code
-	carrierFrequency(outPin, frequency, dutyCycle, leadingPulseDuration, irSignal, &pulseCount);
-	gap(outPin, leadingGapDuration, irSignal, &pulseCount);
-
-	int i;
-	for (i = 0; i < codeLen; i++)
-	{
-		switch (getbit(code,i))
-		{
-			case 0:
-				carrierFrequency(outPin, frequency, dutyCycle, zeroPulse, irSignal, &pulseCount);
-				gap(outPin, zeroGap, irSignal, &pulseCount);
-				break;
-			case 1:
-				carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, &pulseCount);
-				gap(outPin, oneGap, irSignal, &pulseCount);
-				break;
-		}
-	}
-
-	if (sendTrailingPulse)
-	{
-		carrierFrequency(outPin, frequency, dutyCycle, onePulse, irSignal, &pulseCount);
-	}
-
-	printf("pulse count is %i\n", pulseCount);
-	// End Generate Code
-
-	return transmitWave(outPin, irSignal, &pulseCount);
+	if (irSlingPrepare(irSignal, &pulseCount, outPin, frequency, dutyCycle, leadingPulseDuration, leadingGapDuration, onePulse, zeroPulse, oneGap, zeroGap, sendTrailingPulse, code, codeLen)) return 1;
+	int ret = 1;
+	if (transmitWavePre(outPin)) return 1;
+	ret = transmitWave(irSignal, pulseCount);
+	transmitWavePost();
+	return ret;
 }
 
+#if 0
 static inline int irSlingRaw(uint32_t outPin,
 	int frequency,
 	double dutyCycle,
@@ -275,5 +325,6 @@ static inline int irSlingRaw(uint32_t outPin,
 
 	return transmitWave(outPin, irSignal, &pulseCount);
 }
+#endif
 
 #endif
