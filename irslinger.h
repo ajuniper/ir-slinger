@@ -115,7 +115,7 @@ static inline int transmitWave(gpioPulse_t *irSignal, unsigned int pulseCount)
 	{
 		int result = gpioWaveTxSend(waveID, PI_WAVE_MODE_ONE_SHOT);
 
-		printf("Result: %i\n", result);
+		//printf("Result: %i\n", result);
 	}
 	else
 	{
@@ -176,7 +176,7 @@ static inline int irSlingPrepareRC5(gpioPulse_t *irSignal,
 		}
 	}
 
-	printf("pulse count is %i\n", *pulseCount);
+	//printf("pulse count is %i\n", *pulseCount);
 	// End Generate Code
 }
 
