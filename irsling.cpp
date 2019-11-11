@@ -1,32 +1,84 @@
-
 #include <string>
 #include <vector>
-#include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <iostream>
 #include <getopt.h>
 #include <unistd.h>
 #include "irslinger.h"
 
-std::map<std::string,int> config;
-std::map<std::string,std::string> codes;
-bool in_codes = false;
+// TODO
+// support raw
+// support bit counts not %4
+// support multiple concurrent remotes
 
-const char * delimiters = " \t\r\n";
-int handle_line(const std::string & line)
+// LIRC config not supported:
+// http://www.lirc.org/html/lircd.conf.html
+// include
+// manual_sort
+// suppress_repeat
+// flags RC6 / RC-MM / REVERSE / NO_HEAD_REP / NO_FOOT_REP / CONST_LENGTH / RAW_CODES / REPEAT_HEADER
+// driver
+// eps
+// aeps
+// three / two / RC-MM
+// plead
+// foot
+// repeat
+// toggle_bit
+// toggle_bit_mask
+// repeat_mask
+
+// read lirc config file
+class remote_config {
+	public:
+		remote_config ()
+		{
+			config["bits"] = 16;
+			config["frequency"] = 38000;
+			config["dutycycle"] = 50;
+			config["header.on"] = 9000;
+			config["header.off"] = 4500;
+			config["one.on"] = 562;
+			config["one.off"] = 1688;
+			config["zero.on"] = 562;
+			config["zero.off"] = 562;
+			config["ptrail"] = 562;
+			config["min_repeat"] = 0;
+			config["gap"] = 108000;
+			config["pre_data_bits"] = 0;
+		};
+		std::unordered_map<std::string,int> config;
+		std::unordered_map<std::string,std::string> codes;
+		std::unordered_set<std::string> flags;
+};
+std::unordered_map<std::string, remote_config> remotes;
+bool in_codes = false;
+std::string remotename = "default";
+
+
+void tokenise(const std::string in, const char * delimiters, std::vector<std::string> &out)
 {
-	size_t start = line.find_first_not_of(delimiters);
+	size_t start = in.find_first_not_of(delimiters);
 	size_t end = start;
-	std::vector<std::string> tokens;
 
 	while (start != std::string::npos){
 		// Find next occurence of delimiter
-		end = line.find_first_of(delimiters, start);
+		end = in.find_first_of(delimiters, start);
 		// Push back the token found into vector
-		tokens.push_back(line.substr(start, end-start));
+		out.push_back(in.substr(start, end-start));
 		// Skip all occurences of the delimiter to find new start
-		start = line.find_first_not_of(delimiters, end);
+		start = in.find_first_not_of(delimiters, end);
 	}
+}
+
+const char * space_delimiters = " \t\r\n";
+int handle_line(const std::string & line)
+{
+	// tokenise the line
+	std::vector<std::string> tokens;
+	tokenise(line, space_delimiters, tokens);
 	// bale if no tokens
 	if (tokens.empty()) { return 0; }
 	if (tokens[0].at(0) == '#') { return 0; }
@@ -49,19 +101,28 @@ int handle_line(const std::string & line)
 	char xx[50];
 	// special case config
 	if (tokens[0] == "begin" && tokens[1] == "remote") {
-		// ignore
+		// no action required
 		return 0;
 	}
 	if (tokens[0] == "end" && tokens[1] == "remote") {
-		// ignore
+		// no action required
 		return 0;
 	}
 	if (tokens[0] == "name") {
-		// ignore
+		remotename = tokens[1];
 		return 0;
 	}
+
+	remote_config &remote(remotes[remotename]);
+
 	if (tokens[0] == "flags") {
-		// ignore for now, TODO need to check for rc5 etc.
+		std::vector<std::string> fv;
+		tokenise(tokens[1],"| ", fv);
+		// convert to a set for easy reference
+		for (auto f:fv)
+		{
+			remote.flags.insert(f);
+		}
 		return 0;
 	}
 	try
@@ -71,8 +132,8 @@ int handle_line(const std::string & line)
 				std::cerr << "Missing off time in line: "<<line<<std::endl;
 				return -1;
 			}
-			config["header.on"] = std::stoi(tokens[1]);
-			config["header.off"] = std::stoi(tokens[2]);
+			remote.config["header.on"] = std::stoi(tokens[1]);
+			remote.config["header.off"] = std::stoi(tokens[2]);
 			return 0;
 		}
 		if (tokens[0] == "one") {
@@ -80,8 +141,8 @@ int handle_line(const std::string & line)
 				std::cerr << "Missing off time in line: "<<line<<std::endl;
 				return -1;
 			}
-			config["one.on"] = std::stoi(tokens[1]);
-			config["one.off"] = std::stoi(tokens[2]);
+			remote.config["one.on"] = std::stoi(tokens[1]);
+			remote.config["one.off"] = std::stoi(tokens[2]);
 			return 0;
 		}
 		if (tokens[0] == "zero") {
@@ -89,8 +150,8 @@ int handle_line(const std::string & line)
 				std::cerr << "Missing off time in line: "<<line<<std::endl;
 				return -1;
 			}
-			config["zero.on"] = std::stoi(tokens[1]);
-			config["zero.off"] = std::stoi(tokens[2]);
+			remote.config["zero.on"] = std::stoi(tokens[1]);
+			remote.config["zero.off"] = std::stoi(tokens[2]);
 			return 0;
 		}
 		if (tokens[0] == "repeat") {
@@ -98,8 +159,8 @@ int handle_line(const std::string & line)
 				std::cerr << "Missing off time in line: "<<line<<std::endl;
 				return -1;
 			}
-			config["repeat.on"] = std::stoi(tokens[1]);
-			config["repeat.off"] = std::stoi(tokens[2]);
+			remote.config["repeat.on"] = std::stoi(tokens[1]);
+			remote.config["repeat.off"] = std::stoi(tokens[2]);
 			return 0;
 		}
 		if (tokens[0] == "begin" && tokens[1] == "codes") {
@@ -112,13 +173,13 @@ int handle_line(const std::string & line)
 		}
 		if (in_codes) {
 			// TODO what if bits is not multiple of 4?
-			snprintf(xx,sizeof(xx),"%0*x",(3+config["bits"])/4,std::stoi(tokens[1],nullptr,0));
-			codes[tokens[0]] = std::string(xx);
+			snprintf(xx,sizeof(xx),"%0*x",(3+remote.config["bits"])/4,std::stoi(tokens[1],nullptr,0));
+			remote.codes[tokens[0]] = std::string(xx);
 			return 0;
 		}
 
 		// just save the numeric value
-		config[tokens[0]] = std::stoi(tokens[1],nullptr,0);
+		remote.config[tokens[0]] = std::stoi(tokens[1],nullptr,0);
 	}
 	catch (...)
 	{
@@ -134,19 +195,6 @@ int parse_config(const char * filename)
 	{
 		return 1;
 	}
-	config["bits"] = 16;
-	config["frequency"] = 38000;
-	config["dutycycle"] = 50;
-	config["header.on"] = 9000;
-	config["header.off"] = 4500;
-	config["one.on"] = 562;
-	config["one.off"] = 1688;
-	config["zero.on"] = 562;
-	config["zero.off"] = 562;
-	config["ptrail"] = 562;
-	config["min_repeat"] = 0;
-	config["gap"] = 108000;
-	config["pre_data_bits"] = 0;
 
 	std::ifstream configfile(filename);
 
@@ -168,7 +216,8 @@ int main(int argc, char *argv[])
 	int pin = 23;
 	int c ;
 	bool dumpconfig=false;
-	while( ( c = getopt (argc, argv, "dp:f:") ) != -1 ) 
+	std::string thisremote = "";
+	while( ( c = getopt (argc, argv, "r:dp:f:") ) != -1 ) 
 	{
 		switch(c)
 		{
@@ -181,6 +230,9 @@ int main(int argc, char *argv[])
 			case 'p':
 				if(optarg) pin = std::atoi(optarg) ;
 				break;
+			case 'r':
+				if(optarg) thisremote = optarg;
+				break;
 		}			    
 	}
 	if (parse_config(configfile)) {
@@ -188,22 +240,38 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	// if only one remote defined then use that
+	if ((remotes.size() == 1) && (thisremote.size() == 0))
+	{
+		thisremote = remotes.begin()->first;
+	}
+	if (remotes.find(thisremote) == remotes.end())
+	{
+		std::cerr << "Remote " << thisremote << " does not exist" << std::endl;
+		exit(1);
+	}
+	// TODO move this inside the loop so that can send commands to multiple remotes
+	remote_config &remote(remotes[thisremote]);
+
 	if (dumpconfig) {
-		for (auto k:config)
+		std::cout <<"Config for remote "<<thisremote<<std::endl;
+		for (auto k:remote.config)
 		{
 			std::cout << "config: "<<k.first<<" "<<k.second<<std::endl;
 		}
-		for (auto k:codes)
+		for (auto k:remote.codes)
 		{
 			std::cout << "code  : "<<k.first<<" "<<k.second<<std::endl;
 		}
 	}
+
 	int result = -1;
 	transmitWavePre(pin);
 	for (c=optind ; c < argc ; ++c)
 	{
-		std::map<std::string,std::string>::iterator code = codes.find(argv[c]);
-		if (code == codes.end()) {
+
+		std::unordered_map<std::string,std::string>::iterator code = remote.codes.find(argv[c]);
+		if (code == remote.codes.end()) {
 			std::cerr << "Button \"" << argv[c] << "\" is unknown." << std::endl;
 			result |= 1;
 			continue;
@@ -211,47 +279,66 @@ int main(int argc, char *argv[])
 		if (result == -1) { result = 0; }
 
 		std::string pattern("0x");
-		if (config.find("pre_data") != config.end()) {
+		if (remote.config.find("pre_data") != remote.config.end()) {
 			char xx[50];
-			snprintf(xx,sizeof(xx),"%0*x",(3+config["bits"])/4,config["pre_data"]);
+			snprintf(xx,sizeof(xx),"%0*x",(3+remote.config["bits"])/4,remote.config["pre_data"]);
 			pattern += xx;
 		}
 		pattern.append(code->second);
-		int gap = config["gap"];
-		if (config.find("repeat_gap") != config.end()) {
-			gap = config["repeat_gap"];
+		int gap = remote.config["gap"];
+		if (remote.config.find("repeat_gap") != remote.config.end()) {
+			gap = remote.config["repeat_gap"];
 		}
 		//std::cout << "pattern is "<<pattern<<std::endl;
 		gpioPulse_t irSignal[MAX_PULSES];
 		unsigned int pulseCount = 0;
-		if (irSlingPrepare(irSignal, &pulseCount,
-				pin,
-				config["frequency"],
-				double(config["dutycycle"])/100,
-				config["header.on"],
-				config["header.off"],
-				config["one.on"],
-				config["zero.on"],
-				config["one.off"],
-				config["zero.off"],
-				config["ptrail"],
-				pattern.c_str(),
-				config["bits"] + config["pre_data_bits"])) {
-			std::cerr << "Failed to prepare signal" <<std::endl;
-			continue;
+		if (remote.flags.find("SPACE_ENC") != remote.flags.end())
+		{
+			// nec type
+			if (irSlingPrepare(irSignal, &pulseCount,
+					pin,
+					remote.config["frequency"],
+					double(remote.config["dutycycle"])/100,
+					remote.config["header.on"],
+					remote.config["header.off"],
+					remote.config["one.on"],
+					remote.config["zero.on"],
+					remote.config["one.off"],
+					remote.config["zero.off"],
+					remote.config["ptrail"],
+					pattern.c_str(),
+					remote.config["bits"] + remote.config["pre_data_bits"]))
+			{
+				std::cerr << "Failed to prepare signal" <<std::endl;
+				continue;
+			}
+		} else if (remote.flags.find("RC5") != remote.flags.end())
+		{
+			// nec type
+			if (irSlingPrepareRC5(irSignal, &pulseCount,
+					pin,
+					remote.config["frequency"],
+					double(remote.config["dutycycle"])/100,
+					remote.config["one.on"] + remote.config["one.off"],
+					pattern.c_str(),
+					remote.config["bits"] + remote.config["pre_data_bits"]))
+			{
+				std::cerr << "Failed to prepare signal" <<std::endl;
+				continue;
+			}
 		}
 
-		for(int i=0 ; i<=config["min_repeat"]; ++i) {
+		for(int i=0 ; i<=remote.config["min_repeat"]; ++i) {
 			transmitWave(irSignal, pulseCount);
 			// only delay if repeating this press
-			if (i < config["min_repeat"]) {
+			if (i < remote.config["min_repeat"]) {
 				usleep(gap);
 			}
 		}
 
 		// only delay if more buttons
 		if (c < (argc-1)) {
-			usleep(config["gap"]);
+			usleep(remote.config["gap"]);
 		}
 	}
 
