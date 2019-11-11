@@ -252,7 +252,7 @@ static inline int irSlingPrepare(gpioPulse_t *irSignal, unsigned int * pulseCoun
 		carrierFrequency(outPin, frequency, dutyCycle, sendTrailingPulse, irSignal, pulseCount);
 	}
 
-	printf("pulse count is %i\n", *pulseCount);
+	//printf("pulse count is %i\n", *pulseCount);
 	// End Generate Code
 	return 0;
 }
