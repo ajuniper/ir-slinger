@@ -47,10 +47,23 @@ static inline void carrierFrequency(uint32_t outPin, double frequency, double du
 	}
 }
 
-static inline int getbit(const char * code, int bitnum)
+// bitnum is 0 based
+static inline int getbit(const char * code, int bitnum, int totalLength)
 {
 	if (code[0] == '0' && code[1] == 'x') {
-		char x = code[2+(bitnum/4)];
+		size_t digitofs = strlen(code);
+		// find the character/nibble offset from the end of the string
+		// i.e. the final bit to transmit is the lsb of the final digit
+		int nibblebit = totalLength - 1 - bitnum;
+		digitofs -= 1+((nibblebit)/4);
+		// check the string is long enough
+		if (digitofs < 2)
+		{
+			printf("Code %s is not long enough for %d bits\n",code,totalLength);
+			return -1;
+		}
+
+		char x = code[digitofs];
 		int n;
 		if (x >= '0' && x<= '9') {
 			n=x - '0';
@@ -62,8 +75,9 @@ static inline int getbit(const char * code, int bitnum)
 			printf("Character %c is not valid hex\n",x);
 			return -1;
 		}
-		//printf("Bit %d from digit %c n %d\n",(n & (1<<(3-(bitnum%4))))?1:0,x,n);
-		return (n & (1<<(3-(bitnum%4))))?1:0;
+		int ret = (n & (1<<(nibblebit%4)));
+		//printf("code %s bitnum %d totlen %d => nibblebit %d digitofs %d => %d\n",code,bitnum,totalLength,nibblebit,digitofs,ret);
+		return (ret>0)?1:0;
 	}
 	if (code[bitnum] == '0') {
 		return 0;
@@ -163,7 +177,7 @@ static inline int irSlingPrepareRC5(gpioPulse_t *irSignal,
 	int i;
 	for (i = 0; i < codeLen; i++)
 	{
-		switch (getbit(code,i))
+		switch (getbit(code,i,codeLen))
 		{
 			case 0:
 				carrierFrequency(outPin, frequency, dutyCycle, pulseDuration, irSignal, pulseCount);
@@ -224,13 +238,17 @@ static inline int irSlingPrepare(gpioPulse_t *irSignal, unsigned int * pulseCoun
 	}
 
 	// Generate Code
-	carrierFrequency(outPin, frequency, dutyCycle, leadingPulseDuration, irSignal, pulseCount);
-	gap(outPin, leadingGapDuration, irSignal, pulseCount);
+	// insert header
+	if (leadingPulseDuration > 0)
+	{
+		carrierFrequency(outPin, frequency, dutyCycle, leadingPulseDuration, irSignal, pulseCount);
+		gap(outPin, leadingGapDuration, irSignal, pulseCount);
+	}
 
 	int i;
 	for (i = 0; i < codeLen; i++)
 	{
-		switch (getbit(code,i))
+		switch (getbit(code,i,codeLen))
 		{
 			case 0:
 				carrierFrequency(outPin, frequency, dutyCycle, zeroPulse, irSignal, pulseCount);
@@ -293,8 +311,7 @@ static inline int irSling(uint32_t outPin,
 	return ret;
 }
 
-#if 0
-static inline int irSlingRaw(uint32_t outPin,
+static inline int irSlingPrepareRaw(gpioPulse_t * irSignal, unsigned int * pulseCount, uint32_t outPin,
 	int frequency,
 	double dutyCycle,
 	const int *pulses,
@@ -306,25 +323,34 @@ static inline int irSlingRaw(uint32_t outPin,
 		return 1;
 	}
 
-	// Generate Code
-	gpioPulse_t irSignal[MAX_PULSES];
-	int pulseCount = 0;
-
 	int i;
 	for (i = 0; i < numPulses; i++)
 	{
 		if (i % 2 == 0) {
-			carrierFrequency(outPin, frequency, dutyCycle, pulses[i], irSignal, &pulseCount);
+			carrierFrequency(outPin, frequency, dutyCycle, pulses[i], irSignal, pulseCount);
 		} else {
-			gap(outPin, pulses[i], irSignal, &pulseCount);
+			gap(outPin, pulses[i], irSignal, pulseCount);
 		}
 	}
 
-	printf("pulse count is %i\n", pulseCount);
+	//printf("pulse count is %i from %i\n", *pulseCount, numPulses);
 	// End Generate Code
-
-	return transmitWave(outPin, irSignal, &pulseCount);
+	return 0;
 }
-#endif
+static inline int irSlingRaw(uint32_t outPin,
+	int frequency,
+	double dutyCycle,
+	const int *pulses,
+	int numPulses)
+{
+	gpioPulse_t irSignal[MAX_PULSES];
+	unsigned int pulseCount = 0;
+	if (irSlingPrepareRaw(irSignal, &pulseCount, outPin, frequency, dutyCycle, pulses, numPulses)) return 1;
+	if (transmitWavePre(outPin)) return 1;
+	int ret = 1;
+	ret = transmitWave(irSignal, pulseCount);
+	transmitWavePost();
+	return ret;
+}
 
 #endif
