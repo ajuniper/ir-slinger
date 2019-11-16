@@ -1,6 +1,29 @@
 IR Slinger
 ==========
 
+The notes below are mostly obsolete.  I updated the library to use the GPCLK facility to provide a carrier and software to control the marks and spaces, since the orginal pigpio library won't work alongside I2S which I needed.
+
+The program irsling.cpp can load a LIRC remote control file and send codes from it, without needing LIRC installed.
+
+Compile with: ```g++ irsling.cpp -lm -o irsling```
+
+Usage:
+```
+sudo ./irsling -p 4 -f lircremote.conf button button button...
+```
+
+Where ```button``` is the name of a button from the remote config file.
+
+The program supports most LIRC options, there are comments in the code on which are not supported.
+
+Only pins BCM4 and BCM6 are usable since they are the only ones supported by GPCLK0 and GPCLK2.
+
+This code contains work from https://github.com/bschwind/ir-slinger and also from PiGPIO (http://abyz.me.uk/rpi/pigpio/code/minimal_clk.zip).
+
+
+Everything below is basically obsolete
+======================================
+
 [![Build Status](https://travis-ci.org/bschwind/ir-slinger.svg?branch=travis)](https://travis-ci.org/bschwind/ir-slinger)
 
 Small C library for sending infrared packets on the Raspberry Pi
