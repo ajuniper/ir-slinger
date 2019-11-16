@@ -406,7 +406,7 @@ int prepareRaw(remote_config &remote,
 
 // program arguments
 bool dumpcodes=false;
-int maxovershoot = 10000; //ms
+int maxovershoot = 600; //ms
 
 // send the waveform
 int doTransmit(pincycle * pincycles, unsigned int & pulseCount)
