@@ -395,6 +395,11 @@ inline int gpclkWave(pincycle * wave, unsigned int cycleCount)
 			// skip over this code start marker
 			++wave;
 			maxwait = 0;
+
+			// play nicely
+			sched_yield();
+			clock_gettime(CLOCK_REALTIME,&lastedge);
+
 			continue;
 		}
 		set_and_wait(wave);
